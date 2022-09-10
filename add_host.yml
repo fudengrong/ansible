@@ -1,0 +1,16 @@
+- name: add_host
+  hosts: "masters,workers"
+  gather_facts: no
+  tasks:
+    - name: Add dns to each other
+      lineinfile:
+        path: /etc/hosts
+        backup: yes
+        line: "{{item.value.ansible_host}}  {{item.key}}"
+      loop: "{{ hostvars | dict2items }}"
+      loop_control:
+        label: "{{ item.key }} {{ item.value.ansible_host }}"
+
+    - name: set hostname
+      shell: hostnamectl set-hostname --static {{hostname}}
+

@@ -1,0 +1,93 @@
+- hosts: "masters,workers"
+  remote_user: root
+  become: yes
+  become_method: sudo
+  become_user: root
+  gather_facts: yes
+  connection: ssh
+
+  tasks:
+     - name: disable swap
+       shell: |
+               sudo swapoff -a
+               sudo sed -i '/ swap / s/^\(.*\)$/#\1/g' /etc/fstab
+
+     - name: disable firewalld
+       shell: |
+               systemctl stop firewalld.service
+               systemctl disable firewalld.service
+
+     - name: disable selinux
+       replace:
+         path: /etc/selinux/config
+         regexp: '^SELINUX=enforcing'
+         replace: 'SELINUX=disabled'
+
+     - name: Add dns to each other
+       lineinfile:
+         path: /etc/hosts
+         backup: yes
+         line: "{{item.value.ansible_host}}  {{item.key}}"
+       loop: "{{ hostvars | dict2items }}"
+       loop_control:
+         label: "{{ item.key }} {{ item.value.ansible_host }}"
+
+     - name: set hostname
+       shell: hostnamectl set-hostname --static {{hostname}}
+
+     - name: iptables setting
+       shell: |
+             echo 1 > /proc/sys/net/bridge/bridge-nf-call-iptables
+             echo 1 > /proc/sys/net/bridge/bridge-nf-call-ip6tables
+     - name: Modify time zone & clock
+       shell: |
+             cp -f /usr/share/zoneinfo/Asia/Shanghai /etc/localtime
+             clock -w
+             hwclock -w
+     - name: Check time now
+       command: date
+
+     - name: create k8s config file
+       file:
+         path: "/etc/yum.repos.d/k8s.repo"
+         state: "touch"
+
+     - name: add k8s repo
+       blockinfile:
+         path: "/etc/yum.repos.d/k8s.repo"
+         block: |
+                 [kubernetes]
+                 name=Kubernetes
+                 baseurl=https://mirrors.aliyun.com/kubernetes/yum/repos/kubernetes-el7-x86_64/
+                 enabled=1
+                 gpgcheck=1
+                 repo_gpgcheck=1
+                 gpgkey=https://mirrors.aliyun.com/kubernetes/yum/doc/yum-key.gpg https://mirrors.aliyun.com/kubernetes/yum/doc/rpm-package-key.gpg
+
+     - name: install kubeadm
+       shell: |
+               yum install -y kubelet-1.19.8 kubeadm-1.19.8 kubectl-1.19.8 --disableexcludes=kubernetes
+               systemctl enable kubelet
+               systemctl start kubelet
+
+     - name: create docker config file
+       file:
+         path: "/etc/docker/daemon.json"
+         state: "touch"
+
+     - name: add docker config
+       blockinfile:
+         path: "/etc/docker/daemon.json"
+         block: |
+                {
+                 "registry-mirrors": ["https://trtnvh4p.mirror.aliyuncs.com"],
+                 "exec-opts":["native.cgroupdriver=systemd"]
+                }
+
+     - name: install docker
+       shell: |
+               yum install -y yum-utils
+               yum-config-manager --add-repo https://mirrors.aliyun.com/docker-ce/linux/centos/docker-ce.repo
+               yum -y install docker-ce-19.03.9 docker-ce-cli-19.03.9 
+               systemctl start docker
+               systemctl enable docker
